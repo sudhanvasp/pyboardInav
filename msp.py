@@ -296,6 +296,12 @@ class MSPServer:
         if cmd == MSP_RX_MAP:
             return bytes([0, 1, 2, 3, 4, 5, 6, 7])
 
+        if cmd == 42:  # MSP_MIXER — QuadX = 3
+            return bytes([3])
+
+        if cmd == 113:  # MSP_ACTIVEBOXES — 8-byte boxBitmask, all zero
+            return b'\x00' * 8
+
         # ---- Status ----
         if cmd in (MSP_STATUS, MSP_STATUS_EX):
             sensor_flags = SENSOR_GYRO | SENSOR_ACC | SENSOR_BARO
@@ -315,16 +321,20 @@ class MSPServer:
             return p
 
         if cmd == MSP2_INAV_STATUS:
+            # Layout from fc_msp.c:493 (iNAV 9.x):
+            #   u16 cycleTime, u16 i2cErrors, u16 sensorFlags,
+            #   u16 systemLoad%, u8 (battProfile<<4)|profile,
+            #   u32 armingFlags, 8-byte boxBitmask, u8 mixerProfile
             sensor_flags = SENSOR_GYRO | SENSOR_ACC | SENSOR_BARO
             return _pack(
-                ('I', self._cycle_us),   # cycle time µs
-                ('I', 0),                # i2c errors
-                ('H', sensor_flags),
-                ('I', 0),                # mode flags
-                ('B', 0),                # profile
-                ('H', 0),                # cpu load %
-                ('H', 0),                # arming flags
-                ('B', 0),                # acc calib flags
+                ('H', self._cycle_us & 0xFFFF),  # cycle time µs (u16)
+                ('H', 0),                         # i2c errors
+                ('H', sensor_flags),              # sensor flags
+                ('H', 0),                         # system load %
+                ('B', 0),                         # (battProfile<<4)|profile
+                ('I', 0),                         # armingFlags (u32)
+                ('s', b'\x00' * 8),               # boxBitmask (60 bits → 8 bytes)
+                ('B', 0),                         # mixerProfile
             )
 
         if cmd == MSP_SENSOR_STATUS:
