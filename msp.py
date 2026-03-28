@@ -247,14 +247,20 @@ class MSPServer:
     # Dispatch
     # ------------------------------------------------------------------
     def _dispatch_v1(self, cmd, payload):
-        resp = self._handle(cmd, payload)
-        if resp is not None:
-            self._vcp.write(_build_v1(cmd, resp))
+        try:
+            resp = self._handle(cmd, payload)
+            if resp is not None:
+                self._vcp.write(_build_v1(cmd, resp))
+        except Exception:
+            pass  # never let a handler crash the main loop
 
     def _dispatch_v2(self, cmd, payload):
-        resp = self._handle(cmd, payload)
-        if resp is not None:
-            self._vcp.write(_build_v2(cmd, resp))
+        try:
+            resp = self._handle(cmd, payload)
+            if resp is not None:
+                self._vcp.write(_build_v2(cmd, resp))
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Handler dispatch table
@@ -408,6 +414,102 @@ class MSPServer:
         if cmd == MSP_EEPROM_WRITE:
             self._save_cfg(self._cfg)
             return b''  # ACK
+
+        # ---- Unique device ID ----
+        if cmd == 160:  # MSP_UID — 3×u32 = 12 bytes
+            return _pack(('I', 0xDEAD0001), ('I', 0xDEAD0002), ('I', 0xDEAD0003))
+
+        # ---- iNAV v2 telemetry (required for landing page) ----
+        if cmd == 0x2002:  # MSP2_INAV_ANALOG — 24 bytes
+            # u8 battFlags, u16 voltage(cV), u16 amperage(10mA),
+            # u32 power(mW), u32 mAh, u32 mWh, u32 remaining, u8 %, u16 rssi
+            return _pack(
+                ('B', 0),   # battery flags (0 = no battery)
+                ('H', 0),   # voltage
+                ('H', 0),   # amperage
+                ('I', 0),   # power
+                ('I', 0),   # mAh drawn
+                ('I', 0),   # mWh drawn
+                ('I', 0),   # remaining capacity
+                ('B', 0),   # battery %
+                ('H', 0),   # RSSI
+            )
+
+        if cmd == 0x2003:  # MSP2_INAV_MISC — 41 bytes (no GPS, no ADC path)
+            return _pack(
+                ('H', 1500), ('H', 0), ('H', 2000), ('H', 1000), ('H', 1000),  # throttle settings
+                ('B', 0), ('B', 0), ('B', 0),  # gps type/baud/sbas
+                ('B', 0),   # rssi channel
+                ('H', 0),   # mag declination
+                # without ADC: voltage scale, source, cells, 4×cell volts
+                ('H', 0), ('B', 0), ('B', 0), ('H', 0), ('H', 0), ('H', 0), ('H', 0),
+                # capacity: value, warning, critical (u32 each), unit (u8)
+                ('I', 0), ('I', 0), ('I', 0), ('B', 0),
+            )
+
+        if cmd == 0x2005:  # MSP2_INAV_BATTERY_CONFIG — 29 bytes
+            # without ADC (12 bytes) + always (17 bytes)
+            return _pack(
+                ('H', 0), ('B', 0), ('B', 0), ('H', 0), ('H', 0), ('H', 0), ('H', 0),
+                ('H', 0), ('H', 0),  # current offset, scale
+                ('I', 0), ('I', 0), ('I', 0), ('B', 0),  # capacity + unit
+            )
+
+        if cmd == 0x203A:  # MSP2_INAV_MISC2 — 10 bytes
+            # u32 onTime(s), u32 flightTime(s), u8 throttle%, u8 autoThrottle
+            import utime as _t
+            return _pack(
+                ('I', _t.ticks_ms() // 1000),
+                ('I', 0),
+                ('B', 0),
+                ('B', 0),
+            )
+
+        if cmd == 0x2030:  # MSP2_PID — 11 axes × 4 bytes (P,I,D,FF) = 44 bytes
+            cfg = self._cfg
+            # Map our 3 axes to iNAV's PID_ITEM_COUNT=11; rest zero
+            # Order: ROLL, PITCH, YAW, POS_Z, POS_XY, VEL_XY, SURFACE, LEVEL, HEADING, VEL_Z, POS_HEADING
+            axis_map = {0: 'roll', 1: 'pitch', 2: 'yaw'}
+            p = bytearray()
+            for i in range(11):
+                if i in axis_map:
+                    a = cfg[axis_map[i]]
+                    p += bytes([
+                        min(255, int(a['kp'] * 10)),
+                        min(255, int(a['ki'] * 10)),
+                        min(255, int(a['kd'] * 10)),
+                        0,  # FF
+                    ])
+                else:
+                    p += b'\x00\x00\x00\x00'
+            return bytes(p)
+
+        if cmd == 0x2031:  # MSP2_SET_PID — update PID and ACK
+            # payload: 11 axes × 4 bytes
+            if len(payload) >= 12:
+                axes = {0: 'roll', 1: 'pitch', 2: 'yaw'}
+                for i, key in axes.items():
+                    off = i * 4
+                    self._cfg[key] = {
+                        'kp': payload[off]   / 10.0,
+                        'ki': payload[off+1] / 10.0,
+                        'kd': payload[off+2] / 10.0,
+                    }
+            return b''
+
+        # MSP_V2_FRAME (255) — v2-over-v1 wrapper: unwrap and re-dispatch
+        if cmd == 255 and len(payload) >= 6:
+            v2_flag = payload[0]
+            v2_cmd  = payload[1] | (payload[2] << 8)
+            v2_size = payload[3] | (payload[4] << 8)
+            v2_data = payload[5:5 + v2_size]
+            v2_crc  = payload[5 + v2_size] if len(payload) > 5 + v2_size else 0
+            hdr = bytes([v2_flag]) + struct.pack('<HH', v2_cmd, v2_size)
+            if _crc8_dvb_s2(hdr + v2_data) == v2_crc:
+                resp = self._handle(v2_cmd, bytes(v2_data))
+                if resp is not None:
+                    self._vcp.write(_build_v2(v2_cmd, resp))
+            return None  # don't also send a v1 response
 
         # Unknown command — send empty ACK so Configurator doesn't hang
         return b''
