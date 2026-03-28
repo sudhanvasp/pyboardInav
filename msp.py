@@ -45,8 +45,9 @@ SENSOR_GYRO = 1 << 0
 SENSOR_ACC  = 1 << 1
 SENSOR_BARO = 1 << 2
 
-# Sensor hardware status values used by iNAV Configurator
-HW_SENSOR_OK = 2  # GYRO_OK / ACC_OK etc.
+# Sensor hardware status values (hardwareSensorStatus_e in iNAV):
+#   0 = NONE (not configured), 1 = OK, 2 = UNAVAILABLE, 3 = UNHEALTHY
+HW_SENSOR_OK = 1
 
 
 # ---------------------------------------------------------------------------
