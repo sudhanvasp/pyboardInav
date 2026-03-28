@@ -75,17 +75,28 @@ pid_pitch = _make_pid('pitch')
 pid_yaw   = _make_pid('yaw')
 
 # ---------------------------------------------------------------------------
-# ELRS / CRSF receiver on UART 6 (Y1=TX, Y2=RX)
+# ELRS / CRSF receiver — UART chosen by Ports config (RX_SERIAL = 64)
 # ---------------------------------------------------------------------------
-try:
-    _uart_elrs = UART(6, baudrate=420000, bits=8, parity=None, stop=1,
-                      read_buf_len=128)
-    elrs = CRSFReceiver()
-    _elrs_ok = True
-except Exception:
-    elrs = CRSFReceiver()   # will never be healthy, armed stays False
-    _uart_elrs = None
-    _elrs_ok = False
+# Maps iNAV port identifier → pyboard UART number
+# USART1(0)=X9/X10, USART2(1)=Y5/Y6, USART6(5)=Y1/Y2
+_INAV_ID_TO_UART = {0: 1, 1: 2, 5: 6}
+_FUNCTION_RX_SERIAL = 64
+
+_uart_elrs = None
+_elrs_ok   = False
+elrs       = CRSFReceiver()
+
+for _port in cfg.get('ports', []):
+    if _port[1] & _FUNCTION_RX_SERIAL:
+        _uart_num = _INAV_ID_TO_UART.get(_port[0])
+        if _uart_num:
+            try:
+                _uart_elrs = UART(_uart_num, baudrate=420000, bits=8,
+                                  parity=None, stop=1, read_buf_len=128)
+                _elrs_ok = True
+            except Exception:
+                pass
+        break
 
 # ---------------------------------------------------------------------------
 # MSP server (USB VCP)

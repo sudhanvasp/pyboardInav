@@ -557,6 +557,28 @@ class MSPServer:
                 p += bytes([i]) + struct.pack('<I', 1) + bytes([0])
             return bytes(p)
 
+        # ---- Serial port config (Ports tab) ----
+        if cmd == 0x1009:  # MSP2_COMMON_SERIAL_CONFIG
+            # 9 bytes per port: u8 id, u32 functionMask, u8×4 baud indices
+            p = bytearray()
+            for port in self._cfg.get('ports', []):
+                p += bytes([port[0]])
+                p += struct.pack('<I', port[1])
+                p += bytes(port[2:6])
+            return bytes(p)
+
+        if cmd == 0x100A:  # MSP2_COMMON_SET_SERIAL_CONFIG
+            # payload: N × 9-byte port records
+            if len(payload) % 9 == 0:
+                ports = []
+                for i in range(0, len(payload), 9):
+                    ident = payload[i]
+                    func  = struct.unpack_from('<I', payload, i + 1)[0]
+                    bauds = list(payload[i + 5: i + 9])
+                    ports.append([ident, func] + bauds)
+                self._cfg['ports'] = ports
+            return b''   # ACK; caller should send MSP_EEPROM_WRITE to persist
+
         # MSP_V2_FRAME (255) — v2-over-v1 wrapper: unwrap and re-dispatch
         if cmd == 255 and len(payload) >= 6:
             v2_flag = payload[0]
