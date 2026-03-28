@@ -539,9 +539,10 @@ class MSPServer:
         if cmd == 0x2010:  # MSP2_INAV_MIXER — 9 bytes
             # u8 motorDirInverted, u8 0, u8 motorstopOnLow, u8 platformType,
             # u8 hasFlaps, u16 appliedMixerPreset, u8 maxMotors, u8 maxServos
+            # platformType=0=MULTIROTOR, appliedMixerPreset=3=QuadX
             return _pack(
                 ('B', 0), ('B', 0), ('B', 0), ('B', 0),  # platformType=0 = MULTIROTOR
-                ('B', 0), ('H', -1), ('B', 8), ('B', 8),
+                ('B', 0), ('H', 3), ('B', 4), ('B', 0),
             )
 
         if cmd == 0x200A:  # MSP2_INAV_OUTPUT_MAPPING — 1 byte per output
