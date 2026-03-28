@@ -498,6 +498,64 @@ class MSPServer:
                     }
             return b''
 
+        # ---- Fixed-struct config commands (wrong size = JS parser exception) ----
+
+        if cmd == 44:  # MSP_RX_CONFIG — 24 bytes
+            # u8 provider, u16 maxcheck, u16 midrc, u16 mincheck,
+            # u8 spektrum_bind, u16 rx_min_usec, u16 rx_max_usec,
+            # u8 rcInterp, u8 rcInterpInterval, u16 airModeThresh,
+            # u8 0, u32 0, u8 0, u8 fpvCamAngle, u8 receiverType
+            return _pack(
+                ('B', 0), ('H', 1900), ('H', 1500), ('H', 1100),
+                ('B', 0), ('H', 885),  ('H', 2115),
+                ('B', 0), ('B', 19),   ('H', 0),
+                ('B', 0), ('I', 0),    ('B', 0), ('B', 0), ('B', 0),
+            )
+
+        if cmd == 75:  # MSP_FAILSAFE_CONFIG — 20 bytes
+            return _pack(
+                ('B', 5),   # failsafe_delay
+                ('B', 200), # failsafe_off_delay
+                ('H', 1000),# failsafe_throttle
+                ('B', 0),   # was kill_switch
+                ('H', 0),   # failsafe_throttle_low_delay
+                ('B', 0),   # failsafe_procedure (DROP)
+                ('B', 5),   # failsafe_recovery_delay
+                ('H', 0), ('H', 0), ('H', 0),  # fw angles
+                ('H', 50),  # stick_motion_threshold
+                ('H', 0),   # min_distance
+                ('B', 0),   # min_distance_procedure
+            )
+
+        if cmd == 38:  # MSP_BOARD_ALIGNMENT — 6 bytes (3×i16 decidegrees)
+            return _pack(('h', 0), ('h', 0), ('h', 0))
+
+        if cmd == 73:  # MSP_LOOP_TIME — u16
+            return _pack(('H', 1000))
+
+        if cmd == 50:  # MSP_RSSI_CONFIG — u8
+            return bytes([0])
+
+        if cmd == 0x2010:  # MSP2_INAV_MIXER — 9 bytes
+            # u8 motorDirInverted, u8 0, u8 motorstopOnLow, u8 platformType,
+            # u8 hasFlaps, u16 appliedMixerPreset, u8 maxMotors, u8 maxServos
+            return _pack(
+                ('B', 0), ('B', 0), ('B', 0), ('B', 0),  # platformType=0 = MULTIROTOR
+                ('B', 0), ('H', -1), ('B', 8), ('B', 8),
+            )
+
+        if cmd == 0x200A:  # MSP2_INAV_OUTPUT_MAPPING — 1 byte per output
+            # 4 motors: TIM_USE_MOTOR = 0x01
+            return bytes([1, 1, 1, 1])
+
+        if cmd == 0x210D:  # MSP2_INAV_OUTPUT_MAPPING_EXT2 — 6 bytes per output
+            # Each: u8 timerId, u32 usageFlags, u8 label
+            # 4 motors: timerId=0..3, flags=TIM_USE_MOTOR=1, label=0
+            p = bytearray()
+            for i in range(4):
+                p += bytes([i]) + struct.pack('<I', 1) + bytes([0])
+            return bytes(p)
+
         # MSP_V2_FRAME (255) — v2-over-v1 wrapper: unwrap and re-dispatch
         if cmd == 255 and len(payload) >= 6:
             v2_flag = payload[0]
